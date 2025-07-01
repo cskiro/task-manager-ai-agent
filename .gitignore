@@ -168,6 +168,12 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
@@ -205,3 +211,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ===== IMPORTANT: Files we explicitly track =====
+# CLAUDE.md - Project instructions and guidelines (should be version controlled)
+# docs/ - All documentation should be tracked
+# poetry.lock - Should be committed for reproducible builds
+# .github/ - GitHub Actions workflows and configurations
