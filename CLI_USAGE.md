@@ -17,7 +17,26 @@ cp .env.example .env
 
 ## Basic Usage
 
-### Plan a Project
+### Interactive Mode (Default)
+
+The easiest way to use the task manager is in interactive mode:
+
+```bash
+# Launch interactive mode
+poetry run python -m src
+
+# Or explicitly
+poetry run python -m src interactive
+```
+
+In interactive mode:
+- Type your project description and press Enter
+- View the AI-generated task breakdown
+- Use `history` to see previous projects
+- Use `clear` to clear the screen
+- Use `quit` or `exit` to leave
+
+### One-Shot Planning
 
 ```bash
 # Using OpenAI (requires API key in .env)
