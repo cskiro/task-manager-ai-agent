@@ -1,5 +1,5 @@
 """Mock LLM provider for testing."""
-from typing import Dict, List, Optional
+
 import json
 
 from pydantic import BaseModel
@@ -8,14 +8,14 @@ from pydantic import BaseModel
 class MockLLMProvider:
     """
     Mock LLM provider with predictable responses for testing.
-    
+
     Supports configurable responses for different prompts.
     """
-    
-    def __init__(self, responses: Optional[Dict[str, str]] = None):
+
+    def __init__(self, responses: dict[str, str] | None = None):
         """
         Initialize with optional predefined responses.
-        
+
         Args:
             responses: Dict mapping prompt patterns to responses
         """
@@ -23,55 +23,43 @@ class MockLLMProvider:
         self.default_responses = {
             "break down": self._default_task_breakdown,
             "estimate": self._default_time_estimate,
-            "dependencies": self._default_dependencies
+            "dependencies": self._default_dependencies,
         }
-        self.call_history: List[Dict[str, str]] = []
-    
-    async def complete(
-        self,
-        prompt: str,
-        system: Optional[str] = None,
-        **kwargs
-    ) -> str:
+        self.call_history: list[dict[str, str]] = []
+
+    async def complete(self, prompt: str, system: str | None = None, **kwargs) -> str:
         """Get completion from mock LLM."""
         # Log the call
-        self.call_history.append({
-            "prompt": prompt,
-            "system": system or "",
-            "kwargs": str(kwargs)
-        })
-        
+        self.call_history.append({"prompt": prompt, "system": system or "", "kwargs": str(kwargs)})
+
         # Check for exact match in configured responses
         if prompt in self.responses:
             return self.responses[prompt]
-        
+
         # Check for pattern matches in default responses
         prompt_lower = prompt.lower()
         for pattern, response_func in self.default_responses.items():
             if pattern in prompt_lower:
                 return response_func(prompt)
-        
+
         # Default generic response
         return "1. Analyze requirements\n2. Design solution\n3. Implement features\n4. Test thoroughly\n5. Deploy"
-    
+
     async def structured_complete(
-        self,
-        prompt: str,
-        response_model: type[BaseModel],
-        **kwargs
+        self, prompt: str, response_model: type[BaseModel], **kwargs
     ) -> BaseModel:
         """Get structured response from mock LLM."""
         # Simple implementation - get text response and parse as JSON
         text_response = await self.complete(prompt, **kwargs)
-        
+
         # Try to parse as JSON, otherwise create default instance
         try:
             data = json.loads(text_response)
             return response_model(**data)
-        except:
+        except Exception:
             # Return default instance
             return response_model()
-    
+
     def _default_task_breakdown(self, prompt: str) -> str:
         """Generate task breakdown based on project type."""
         if "web" in prompt.lower() or "app" in prompt.lower():
@@ -112,7 +100,7 @@ class MockLLMProvider:
 5. Create documentation (3-5 hours)
 6. Test and validate solution (4-8 hours)
 """
-    
+
     def _default_time_estimate(self, prompt: str) -> str:
         """Generate time estimates."""
         return """
@@ -121,7 +109,7 @@ Based on the complexity, here are the time estimates:
 - Realistic: 35 hours (accounting for normal challenges)
 - Pessimistic: 50 hours (if significant issues arise)
 """
-    
+
     def _default_dependencies(self, prompt: str) -> str:
         """Generate task dependencies."""
         return """
@@ -132,15 +120,15 @@ Task dependencies:
 - Task 6 depends on Task 5
 - Task 7 can start after Task 3
 """
-    
+
     def get_call_count(self) -> int:
         """Get number of times the mock was called."""
         return len(self.call_history)
-    
-    def get_last_call(self) -> Optional[Dict[str, str]]:
+
+    def get_last_call(self) -> dict[str, str] | None:
         """Get the last call made to the mock."""
         return self.call_history[-1] if self.call_history else None
-    
+
     def reset(self) -> None:
         """Reset the call history."""
         self.call_history.clear()
