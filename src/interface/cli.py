@@ -25,7 +25,7 @@ load_dotenv()
 app = typer.Typer(
     name="taskman",
     help="AI-powered task manager for breaking down complex projects",
-    rich_markup_mode=None  # Disable Rich formatting to avoid help bug
+    rich_markup_mode=None  # Disable Rich formatting to avoid Typer 0.12.5 bug
 )
 console = Console()
 
@@ -166,6 +166,7 @@ def version():
     """Show version information."""
     console.print("[bold]Task Manager AI Agent[/bold] v0.1.0")
     console.print("An intelligent AI agent for project planning")
+    raise typer.Exit()
 
 
 @app.command()
@@ -322,10 +323,4 @@ def _display_tasks_table(tasks):
 
 
 if __name__ == "__main__":
-    import sys
-    
-    # If no arguments provided, run interactive mode
-    if len(sys.argv) == 1:
-        asyncio.run(_interactive_mode())
-    else:
-        app()
+    app()
