@@ -1,6 +1,7 @@
 """Command-line interface for task manager AI agent."""
 import os
 import asyncio
+from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
@@ -17,6 +18,7 @@ from src.application.use_cases.plan_project import (
     PlanProjectRequest
 )
 from src.infrastructure.llm import OpenAIProvider, MockLLMProvider
+from src.infrastructure.persistence.json_task_repository import JSONTaskRepository
 
 # Load environment variables
 load_dotenv()
@@ -25,20 +27,14 @@ load_dotenv()
 app = typer.Typer(
     name="taskman",
     help="AI-powered task manager for breaking down complex projects",
-    invoke_without_command=True
+    rich_markup_mode=None  # Disable Rich formatting to avoid Typer 0.12.5 bug
 )
 console = Console()
 
+# Global state for current project (simple solution for MVP)
+_current_tasks = []
 
-@app.callback()
-def main(ctx: typer.Context):
-    """
-    Task Manager AI Agent - Break down complex projects with AI.
-    
-    If no command is provided, launches interactive mode.
-    """
-    if ctx.invoked_subcommand is None:
-        interactive()
+
 
 
 class InMemoryTaskRepository:
@@ -63,6 +59,8 @@ def plan(
 
 async def _plan_project(description: str, context: Optional[str], mock: bool, model: str):
     """Async implementation of project planning."""
+    global _current_tasks
+    
     # Show what we're doing
     console.print(f"\n[bold blue]Planning project:[/bold blue] {description}")
     if context:
@@ -93,6 +91,9 @@ async def _plan_project(description: str, context: Optional[str], mock: bool, mo
             context=context
         )
         response = await use_case.execute(request)
+    
+    # Store tasks globally for save command
+    _current_tasks = response.tasks
     
     # Display results
     console.print(f"\n[bold green]✓[/bold green] {response.summary}\n")
@@ -175,6 +176,64 @@ def version():
     """Show version information."""
     console.print("[bold]Task Manager AI Agent[/bold] v0.1.0")
     console.print("An intelligent AI agent for project planning")
+    raise typer.Exit()
+
+
+@app.command()
+def save(
+    file_path: Path = typer.Argument(..., help="Path to save the project file")
+):
+    """Save the current project plan to a JSON file."""
+    global _current_tasks
+    
+    if not _current_tasks:
+        console.print("[red]Error: No project planned yet.[/red]")
+        console.print("Use 'plan' command first to create a project plan.")
+        raise typer.Exit(1)
+    
+    # Create repository and save tasks
+    repo = JSONTaskRepository(file_path)
+    
+    asyncio.run(_save_tasks(repo, _current_tasks))
+    
+    console.print(f"[green]✓ Project saved to {file_path}[/green]")
+    console.print(f"  {len(_current_tasks)} tasks saved")
+
+
+async def _save_tasks(repo: JSONTaskRepository, tasks):
+    """Save tasks to repository."""
+    for task in tasks:
+        await repo.save(task)
+
+
+@app.command()
+def load(
+    file_path: Path = typer.Argument(..., help="Path to the project file to load")
+):
+    """Load a project plan from a JSON file."""
+    global _current_tasks
+    
+    if not file_path.exists():
+        console.print(f"[red]Error: File not found: {file_path}[/red]")
+        raise typer.Exit(1)
+    
+    # Load tasks from repository
+    repo = JSONTaskRepository(file_path)
+    _current_tasks = asyncio.run(repo.get_all())
+    
+    if not _current_tasks:
+        console.print("[yellow]Warning: No tasks found in file.[/yellow]")
+        return
+    
+    # Display loaded project
+    console.print(f"\n[green]✓ Project loaded from {file_path}[/green]")
+    console.print(f"  {len(_current_tasks)} tasks loaded\n")
+    
+    _display_tasks_table(_current_tasks)
+    
+    # Calculate total time
+    total_hours = sum(task.expected_hours for task in _current_tasks)
+    console.print(f"\n[bold]Total estimated time:[/bold] {total_hours:.1f} hours")
 
 
 @app.command()
