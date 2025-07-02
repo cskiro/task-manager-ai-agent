@@ -423,12 +423,13 @@ async def _agent_plan_project(description: str, mock: bool, verbose: bool):
             raise typer.Exit(1)
         llm_provider = OpenAIProvider(api_key=api_key)
     
-    # Create agent
+    # Create agent with CoT reasoning enabled
     task_decomposer = TaskDecomposer()
     agent = TaskPlanningAgent(
         name="TaskPlanner",
         llm_provider=llm_provider,
-        task_decomposer=task_decomposer
+        task_decomposer=task_decomposer,
+        enable_cot=True  # Enable Chain of Thought reasoning
     )
     
     # Run agent
@@ -446,10 +447,20 @@ async def _agent_plan_project(description: str, mock: bool, verbose: bool):
     console.print(f"\n[bold green]✓ Agent completed planning[/bold green]")
     
     if verbose:
-        # Show agent's reasoning process
+        # Show Chain of Thought reasoning steps
+        reasoning_steps = result.get("reasoning_steps", [])
+        if reasoning_steps:
+            console.print("\n[bold cyan]Chain of Thought Reasoning:[/bold cyan]")
+            for step in reasoning_steps:
+                console.print(f"\n  [bold]Step {step['step']}:[/bold]")
+                console.print(f"  💭 {step['thought']}")
+                console.print(f"  ✓ {step['conclusion']}")
+        
+        # Show agent's memory
         console.print("\n[dim]Agent Memory:[/dim]")
         for i, memory in enumerate(agent.memory.short_term):
-            console.print(f"  Step {i+1}: {memory['content'].get('thought', 'N/A')}")
+            if memory["content"].get("type") != "reasoning_step":  # Don't duplicate reasoning steps
+                console.print(f"  Step {i+1}: {memory['content'].get('thought', 'N/A')}")
     
     # Display tasks
     if _current_tasks:
