@@ -401,17 +401,22 @@ def plan(
     description: str = typer.Argument(..., help="Project description to plan"),
     mock: bool = typer.Option(False, "--mock", help="Use mock LLM for testing"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show agent reasoning process"),
-    estimate: bool = typer.Option(False, "--estimate", "-e", help="Calculate time and cost estimations")
+    estimate: bool = typer.Option(False, "--estimate", "-e", help="Calculate time and cost estimations"),
+    no_safety: bool = typer.Option(False, "--no-safety", help="Disable safety filters (not recommended)")
 ):
     """Use AI agent to plan a project with reasoning steps."""
-    asyncio.run(_agent_plan_project(description, mock, verbose, estimate))
+    asyncio.run(_agent_plan_project(description, mock, verbose, estimate, not no_safety))
 
 
-async def _agent_plan_project(description: str, mock: bool, verbose: bool, estimate: bool = False):
+async def _agent_plan_project(description: str, mock: bool, verbose: bool, estimate: bool = False, enable_safety: bool = True):
     """Execute agent-based project planning."""
     global _current_tasks
     
     console.print(f"\n[bold blue]🤖 Agent Planning:[/bold blue] {description}")
+    
+    # Show safety status
+    if not enable_safety:
+        console.print("[bold red]⚠️  Safety filters disabled - Use with caution![/bold red]")
     
     # Initialize LLM provider
     if mock:
@@ -431,7 +436,8 @@ async def _agent_plan_project(description: str, mock: bool, verbose: bool, estim
         llm_provider=llm_provider,
         task_decomposer=task_decomposer,
         enable_cot=True,  # Enable Chain of Thought reasoning
-        enable_estimation=estimate  # Enable estimation if requested
+        enable_estimation=estimate,  # Enable estimation if requested
+        enable_safety=enable_safety  # Enable safety filters
     )
     
     # Register calculator tool if estimation is enabled

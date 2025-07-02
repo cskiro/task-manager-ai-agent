@@ -66,6 +66,9 @@ class BaseAgent(ABC):
                 # Check if complete
                 if thought.get("is_complete", False):
                     self.state = AgentState.COMPLETED
+                    # If there's an error, return it at the top level
+                    if "error" in thought:
+                        return {"error": thought["error"]}
                     return thought.get("result")
                 
                 # Act phase

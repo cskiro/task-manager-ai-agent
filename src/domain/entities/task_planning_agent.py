@@ -1,11 +1,12 @@
 """Task Planning Agent implementation."""
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from uuid import UUID
 
 from src.domain.entities.agent import BaseAgent
 from src.domain.entities.task import Task
 from src.domain.services.task_decomposer import TaskDecomposer, LLMProvider
+from src.domain.safety.basic_filter import BasicSafetyFilter
 
 
 class TaskPlanningAgent(BaseAgent):
@@ -18,7 +19,9 @@ class TaskPlanningAgent(BaseAgent):
         task_decomposer: TaskDecomposer,
         enable_cot: bool = False,
         enable_tools: bool = False,
-        enable_estimation: bool = False
+        enable_estimation: bool = False,
+        enable_safety: bool = True,
+        max_tasks: int = 20
     ):
         super().__init__(name)
         self.llm_provider = llm_provider
@@ -26,14 +29,29 @@ class TaskPlanningAgent(BaseAgent):
         self.enable_cot = enable_cot
         self.enable_tools = enable_tools
         self.enable_estimation = enable_estimation
+        self.enable_safety = enable_safety
         self.project_context = {}
         self.current_tasks = []
         self.reasoning_steps = []
+        
+        # Initialize safety filter if enabled
+        self.safety_filter = BasicSafetyFilter(max_tasks=max_tasks) if enable_safety else None
     
     async def think(self, observation: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze project requirements and decide on planning approach."""
         project_input = observation.get("input", "")
         iteration = observation.get("iteration", 0)
+        
+        # Validate input if safety is enabled
+        if self.safety_filter and iteration == 0:
+            validation_result = await self.safety_filter.validate_input(project_input)
+            if not validation_result.valid:
+                return {
+                    "thought": f"Input validation failed: {validation_result.reason}",
+                    "action": "reject_input",
+                    "is_complete": True,
+                    "error": f"Safety check failed: {validation_result.reason}"
+                }
         
         if iteration == 0:
             # Generate Chain of Thought reasoning if enabled
@@ -66,6 +84,17 @@ class TaskPlanningAgent(BaseAgent):
                 "total_tasks": len(self.current_tasks),
                 "project_description": project_input
             }
+            
+            # Validate output if safety is enabled
+            if self.safety_filter:
+                validation_result = await self.safety_filter.validate_output(result)
+                if not validation_result.valid:
+                    return {
+                        "thought": f"Output validation failed: {validation_result.reason}",
+                        "action": "reject_output",
+                        "is_complete": True,
+                        "error": f"Safety check failed: {validation_result.reason}"
+                    }
             
             # Include reasoning steps if CoT is enabled
             if self.enable_cot and self.reasoning_steps:
@@ -101,6 +130,13 @@ class TaskPlanningAgent(BaseAgent):
                 "status": "plan_created",
                 "execution_plan": execution_plan,
                 "total_tasks": len(tasks)
+            }
+        
+        elif action_type in ["reject_input", "reject_output"]:
+            # Safety rejection - return error
+            return {
+                "status": "rejected",
+                "error": action.get("error", "Safety check failed")
             }
         
         else:
