@@ -25,20 +25,11 @@ load_dotenv()
 app = typer.Typer(
     name="taskman",
     help="AI-powered task manager for breaking down complex projects",
-    invoke_without_command=True
+    rich_markup_mode=None  # Disable Rich formatting to avoid help bug
 )
 console = Console()
 
 
-@app.callback()
-def main(ctx: typer.Context):
-    """
-    Task Manager AI Agent - Break down complex projects with AI.
-    
-    If no command is provided, launches interactive mode.
-    """
-    if ctx.invoked_subcommand is None:
-        interactive()
 
 
 class InMemoryTaskRepository:
@@ -331,4 +322,10 @@ def _display_tasks_table(tasks):
 
 
 if __name__ == "__main__":
-    app()
+    import sys
+    
+    # If no arguments provided, run interactive mode
+    if len(sys.argv) == 1:
+        asyncio.run(_interactive_mode())
+    else:
+        app()
