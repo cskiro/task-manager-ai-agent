@@ -19,6 +19,8 @@ from src.application.use_cases.plan_project import (
 )
 from src.infrastructure.llm import OpenAIProvider, MockLLMProvider
 from src.infrastructure.persistence.json_task_repository import JSONTaskRepository
+from src.domain.entities.task_planning_agent import TaskPlanningAgent
+from src.domain.services.task_decomposer import TaskDecomposer
 
 # Load environment variables
 load_dotenv()
@@ -387,6 +389,84 @@ def _display_tasks_table(tasks):
         )
     
     console.print(table)
+
+
+# Create agent subcommand group
+agent_app = typer.Typer(help="Agent-based planning commands")
+app.add_typer(agent_app, name="agent")
+
+
+@agent_app.command()
+def plan(
+    description: str = typer.Argument(..., help="Project description to plan"),
+    mock: bool = typer.Option(False, "--mock", help="Use mock LLM for testing"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show agent reasoning process")
+):
+    """Use AI agent to plan a project with reasoning steps."""
+    asyncio.run(_agent_plan_project(description, mock, verbose))
+
+
+async def _agent_plan_project(description: str, mock: bool, verbose: bool):
+    """Execute agent-based project planning."""
+    global _current_tasks
+    
+    console.print(f"\n[bold blue]🤖 Agent Planning:[/bold blue] {description}")
+    
+    # Initialize LLM provider
+    if mock:
+        console.print("[yellow]Using mock LLM provider[/yellow]")
+        llm_provider = MockLLMProvider()
+    else:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            console.print("[red]Error: OPENAI_API_KEY not found[/red]")
+            raise typer.Exit(1)
+        llm_provider = OpenAIProvider(api_key=api_key)
+    
+    # Create agent
+    task_decomposer = TaskDecomposer()
+    agent = TaskPlanningAgent(
+        name="TaskPlanner",
+        llm_provider=llm_provider,
+        task_decomposer=task_decomposer
+    )
+    
+    # Run agent
+    with console.status("[bold green]Agent is thinking..."):
+        result = await agent.run(description)
+    
+    if "error" in result:
+        console.print(f"[red]Error: {result['error']}[/red]")
+        raise typer.Exit(1)
+    
+    # Extract tasks and update global state
+    _current_tasks = result.get("tasks", [])
+    
+    # Display results
+    console.print(f"\n[bold green]✓ Agent completed planning[/bold green]")
+    
+    if verbose:
+        # Show agent's reasoning process
+        console.print("\n[dim]Agent Memory:[/dim]")
+        for i, memory in enumerate(agent.memory.short_term):
+            console.print(f"  Step {i+1}: {memory['content'].get('thought', 'N/A')}")
+    
+    # Display tasks
+    if _current_tasks:
+        _display_tasks_table(_current_tasks)
+        
+        # Show execution plan
+        execution_plan = result.get("execution_plan", [])
+        if execution_plan:
+            console.print("\n[bold]Execution Plan:[/bold]")
+            for step in execution_plan:
+                console.print(f"\n  Step {step['step']}:")
+                for task in step['tasks']:
+                    console.print(f"    - {task['title']} {task['priority']}")
+                if step.get('can_parallel'):
+                    console.print("    [dim](Can be done in parallel)[/dim]")
+    
+    console.print(f"\n[dim]Agent State: {agent.state.value}[/dim]")
 
 
 if __name__ == "__main__":
