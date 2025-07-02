@@ -400,13 +400,14 @@ app.add_typer(agent_app, name="agent")
 def plan(
     description: str = typer.Argument(..., help="Project description to plan"),
     mock: bool = typer.Option(False, "--mock", help="Use mock LLM for testing"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show agent reasoning process")
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show agent reasoning process"),
+    estimate: bool = typer.Option(False, "--estimate", "-e", help="Calculate time and cost estimations")
 ):
     """Use AI agent to plan a project with reasoning steps."""
-    asyncio.run(_agent_plan_project(description, mock, verbose))
+    asyncio.run(_agent_plan_project(description, mock, verbose, estimate))
 
 
-async def _agent_plan_project(description: str, mock: bool, verbose: bool):
+async def _agent_plan_project(description: str, mock: bool, verbose: bool, estimate: bool = False):
     """Execute agent-based project planning."""
     global _current_tasks
     
@@ -429,8 +430,15 @@ async def _agent_plan_project(description: str, mock: bool, verbose: bool):
         name="TaskPlanner",
         llm_provider=llm_provider,
         task_decomposer=task_decomposer,
-        enable_cot=True  # Enable Chain of Thought reasoning
+        enable_cot=True,  # Enable Chain of Thought reasoning
+        enable_estimation=estimate  # Enable estimation if requested
     )
+    
+    # Register calculator tool if estimation is enabled
+    if estimate:
+        from src.domain.tools.calculator import CalculatorTool
+        calculator = CalculatorTool(name="calculator")
+        agent.register_tool(calculator)
     
     # Run agent
     with console.status("[bold green]Agent is thinking..."):
@@ -476,6 +484,16 @@ async def _agent_plan_project(description: str, mock: bool, verbose: bool):
                     console.print(f"    - {task['title']} {task['priority']}")
                 if step.get('can_parallel'):
                     console.print("    [dim](Can be done in parallel)[/dim]")
+    
+    # Display estimations if available
+    estimations = result.get("estimations", {})
+    if estimations:
+        console.print("\n[bold]Project Estimations:[/bold]")
+        console.print(f"  Total Hours: {estimations.get('total_hours', 0):.1f}h")
+        console.print(f"  With 20% Buffer: {estimations.get('hours_with_buffer', 0):.1f}h")
+        console.print(f"  Estimated Cost: {estimations.get('cost_calculation', 'N/A')}")
+        if estimations.get('parallel_time_saved', 0) > 0:
+            console.print(f"  Time Saved (Parallel): {estimations['parallel_time_saved']:.1f}h")
     
     console.print(f"\n[dim]Agent State: {agent.state.value}[/dim]")
 

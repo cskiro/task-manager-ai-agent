@@ -17,13 +17,15 @@ class TaskPlanningAgent(BaseAgent):
         llm_provider: LLMProvider,
         task_decomposer: TaskDecomposer,
         enable_cot: bool = False,
-        enable_tools: bool = False
+        enable_tools: bool = False,
+        enable_estimation: bool = False
     ):
         super().__init__(name)
         self.llm_provider = llm_provider
         self.task_decomposer = task_decomposer
         self.enable_cot = enable_cot
         self.enable_tools = enable_tools
+        self.enable_estimation = enable_estimation
         self.project_context = {}
         self.current_tasks = []
         self.reasoning_steps = []
@@ -68,6 +70,10 @@ class TaskPlanningAgent(BaseAgent):
             # Include reasoning steps if CoT is enabled
             if self.enable_cot and self.reasoning_steps:
                 result["reasoning_steps"] = self.reasoning_steps
+            
+            # Include estimations if enabled and calculator available
+            if self.enable_estimation and "calculator" in self.tools:
+                result["estimations"] = await self._calculate_estimations()
             
             return {
                 "thought": "Creating execution plan from decomposed tasks",
@@ -221,3 +227,44 @@ class TaskPlanningAgent(BaseAgent):
                 "results": tech_result.data.get("results", []),
                 "research_summary": "Researched architecture patterns"
             })
+    
+    async def _calculate_estimations(self) -> Dict[str, Any]:
+        """Calculate project estimations using calculator tool."""
+        calculator = self.tools["calculator"]
+        estimations = {}
+        
+        # Calculate total hours
+        total_hours = sum(task.expected_hours for task in self.current_tasks)
+        estimations["total_hours"] = total_hours
+        
+        # Calculate with buffer (20% buffer is common)
+        buffer_calc = await calculator.calculate(f"{total_hours} * 1.2")
+        if buffer_calc.success:
+            estimations["hours_with_buffer"] = buffer_calc.data["result"]
+        
+        # Calculate cost at standard rate ($100/hour for example)
+        cost_calc = await calculator.calculate(f"{total_hours} * 100")
+        if cost_calc.success:
+            estimations["total_cost"] = cost_calc.data["result"]
+            estimations["cost_calculation"] = f"${cost_calc.data['result']:.2f} at $100/hour"
+        
+        # Calculate parallel execution time savings
+        execution_plan = self._create_execution_plan()
+        sequential_time = total_hours
+        
+        # Calculate parallel time (max time in each parallel step)
+        parallel_time = 0
+        for step in execution_plan:
+            if step.get("can_parallel") and len(step["tasks"]) > 1:
+                # Max time of parallel tasks
+                step_times = [t["estimated_hours"] for t in step["tasks"]]
+                parallel_time += max(step_times)
+            else:
+                # Sequential tasks
+                parallel_time += sum(t["estimated_hours"] for t in step["tasks"])
+        
+        time_saved_calc = await calculator.calculate(f"{sequential_time} - {parallel_time}")
+        if time_saved_calc.success:
+            estimations["parallel_time_saved"] = time_saved_calc.data["result"]
+        
+        return estimations
