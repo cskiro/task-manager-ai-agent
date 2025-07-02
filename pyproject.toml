@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "task-manager-ai-agent"
-version = "0.2.0-alpha"
+version = "0.3.0-alpha"
 description = "An intelligent AI agent that helps break down complex projects into manageable tasks"
 authors = ["Connor"]
 readme = "README.md"
