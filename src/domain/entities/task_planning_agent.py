@@ -16,12 +16,14 @@ class TaskPlanningAgent(BaseAgent):
         name: str,
         llm_provider: LLMProvider,
         task_decomposer: TaskDecomposer,
-        enable_cot: bool = False
+        enable_cot: bool = False,
+        enable_tools: bool = False
     ):
         super().__init__(name)
         self.llm_provider = llm_provider
         self.task_decomposer = task_decomposer
         self.enable_cot = enable_cot
+        self.enable_tools = enable_tools
         self.project_context = {}
         self.current_tasks = []
         self.reasoning_steps = []
@@ -35,6 +37,10 @@ class TaskPlanningAgent(BaseAgent):
             # Generate Chain of Thought reasoning if enabled
             if self.enable_cot:
                 await self._generate_cot_reasoning(project_input)
+            
+            # Use tools to research if enabled
+            if self.enable_tools and "web_search" in self.tools:
+                await self._research_project(project_input)
             
             # First iteration: decompose the project
             tasks = await self.task_decomposer.decompose(
@@ -187,3 +193,31 @@ class TaskPlanningAgent(BaseAgent):
             "type": "reasoning_step",
             **reasoning_step
         })
+    
+    async def _research_project(self, project_description: str) -> None:
+        """Use web search tool to research the project."""
+        web_search = self.tools["web_search"]
+        
+        # Research best practices
+        query = f"{project_description} best practices"
+        result = await web_search.search(query, max_results=3)
+        
+        # Store research in memory
+        self.memory.add_observation({
+            "tool_used": "web_search",
+            "query": query,
+            "results": result.data.get("results", []),
+            "research_summary": "Found best practices for the project"
+        })
+        
+        # If specific technology mentioned, research it
+        if "React" in project_description or "Python" in project_description:
+            tech_query = f"{project_description} architecture patterns"
+            tech_result = await web_search.search(tech_query, max_results=2)
+            
+            self.memory.add_observation({
+                "tool_used": "web_search", 
+                "query": tech_query,
+                "results": tech_result.data.get("results", []),
+                "research_summary": "Researched architecture patterns"
+            })

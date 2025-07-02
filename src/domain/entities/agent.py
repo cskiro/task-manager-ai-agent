@@ -40,6 +40,7 @@ class BaseAgent(ABC):
         self.state = AgentState.IDLE
         self.memory = AgentMemory()
         self.max_iterations = 10
+        self.tools = {}
     
     @abstractmethod
     async def think(self, observation: Dict[str, Any]) -> Dict[str, Any]:
@@ -85,3 +86,7 @@ class BaseAgent(ABC):
                 return {"error": str(e)}
         
         return {"error": "Max iterations reached"}
+    
+    def register_tool(self, tool) -> None:
+        """Register a tool for the agent to use."""
+        self.tools[tool.name] = tool
