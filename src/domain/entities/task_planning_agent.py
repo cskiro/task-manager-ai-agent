@@ -1,10 +1,13 @@
 """Task Planning Agent implementation."""
 
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
-from src.domain.entities.agent import BaseAgent
+from src.domain.entities.agent import AgentState, BaseAgent
+from src.domain.entities.checkpoint import AgentCheckpoint
 from src.domain.entities.task import Task
 from src.domain.safety.basic_filter import BasicSafetyFilter
+from src.domain.services.checkpoint_service import CheckpointService
 from src.domain.services.task_decomposer import LLMProvider, TaskDecomposer
 
 
@@ -21,6 +24,9 @@ class TaskPlanningAgent(BaseAgent):
         enable_estimation: bool = False,
         enable_safety: bool = True,
         max_tasks: int = 20,
+        enable_auto_checkpoint: bool = False,
+        checkpoint_dir: Optional[Path] = None,
+        max_checkpoints: int = 3,
     ):
         super().__init__(name)
         self.llm_provider = llm_provider
@@ -32,6 +38,10 @@ class TaskPlanningAgent(BaseAgent):
         self.project_context = {}
         self.current_tasks = []
         self.reasoning_steps = []
+        self.enable_auto_checkpoint = enable_auto_checkpoint
+        
+        # Initialize checkpoint service
+        self.checkpoint_service = CheckpointService(checkpoint_dir, max_checkpoints)
 
         # Initialize safety filter if enabled
         self.safety_filter = BasicSafetyFilter(max_tasks=max_tasks) if enable_safety else None
@@ -65,6 +75,10 @@ class TaskPlanningAgent(BaseAgent):
             tasks = await self.task_decomposer.decompose(project_input, self.llm_provider)
 
             self.current_tasks = tasks
+            
+            # Auto-checkpoint after task decomposition if enabled
+            if self.enable_auto_checkpoint:
+                await self.save_checkpoint(milestone="task_decomposition_complete")
 
             return {
                 "thought": f"Decomposed project into {len(tasks)} tasks",
@@ -299,3 +313,79 @@ class TaskPlanningAgent(BaseAgent):
             estimations["parallel_time_saved"] = time_saved_calc.data["result"]
 
         return estimations
+    
+    async def save_checkpoint(self, filepath: Optional[Path] = None, milestone: Optional[str] = None) -> Path:
+        """Save current agent state to checkpoint.
+        
+        Args:
+            filepath: Optional specific filepath for checkpoint
+            milestone: Optional milestone description
+            
+        Returns:
+            Path to saved checkpoint
+        """
+        checkpoint = self.checkpoint_service.create_checkpoint_from_agent(self)
+        checkpoint.milestone = milestone
+        
+        # Add additional context
+        checkpoint.reasoning_traces = self.reasoning_steps
+        if self.current_tasks:
+            checkpoint.task_context = {
+                "current_tasks": [
+                    {
+                        "id": str(task.id),
+                        "title": task.title,
+                        "status": task.status.value,
+                        "priority": task.priority.value,
+                    }
+                    for task in self.current_tasks
+                ]
+            }
+        
+        saved_path = await self.checkpoint_service.save_checkpoint(checkpoint, filepath)
+        
+        # Auto-checkpoint milestone if enabled
+        if self.enable_auto_checkpoint and milestone:
+            await self.checkpoint_service.save_checkpoint(checkpoint)
+        
+        return saved_path
+    
+    async def restore_checkpoint(self, filepath: Path) -> None:
+        """Restore agent state from checkpoint.
+        
+        Args:
+            filepath: Path to checkpoint file
+        """
+        checkpoint = await self.checkpoint_service.load_checkpoint(filepath)
+        
+        # Restore basic properties
+        self.name = checkpoint.agent_name
+        self.state = AgentState(checkpoint.state)
+        
+        # Restore memory
+        if "short_term" in checkpoint.memory:
+            self.memory.short_term = checkpoint.memory["short_term"]
+        
+        # Restore task context
+        if checkpoint.task_context:
+            self.task_context = checkpoint.task_context
+        
+        # Restore reasoning traces
+        self.reasoning_traces = checkpoint.reasoning_traces
+        self.reasoning_steps = checkpoint.reasoning_traces  # For backward compatibility
+    
+    def create_checkpoint(self, milestone: str) -> None:
+        """Create a checkpoint synchronously (for test compatibility).
+        
+        Args:
+            milestone: Description of the checkpoint milestone
+        """
+        import asyncio
+        
+        # Run async method in sync context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self.save_checkpoint(milestone=milestone))
+        finally:
+            loop.close()

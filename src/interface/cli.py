@@ -380,13 +380,16 @@ def agent_plan(
     no_safety: bool = typer.Option(
         False, "--no-safety", help="Disable safety filters (not recommended)"
     ),
+    resume: bool = typer.Option(False, "--resume", "-r", help="Resume from last checkpoint"),
+    checkpoint: bool = typer.Option(True, "--checkpoint/--no-checkpoint", help="Enable auto-checkpointing"),
 ):
     """Use AI agent to plan a project with reasoning steps."""
-    asyncio.run(_agent_plan_project(description, mock, verbose, estimate, not no_safety))
+    asyncio.run(_agent_plan_project(description, mock, verbose, estimate, not no_safety, resume, checkpoint))
 
 
 async def _agent_plan_project(
-    description: str, mock: bool, verbose: bool, estimate: bool = False, enable_safety: bool = True
+    description: str, mock: bool, verbose: bool, estimate: bool = False, enable_safety: bool = True,
+    resume: bool = False, enable_checkpoint: bool = True
 ):
     """Execute agent-based project planning."""
     global _current_tasks
@@ -410,6 +413,18 @@ async def _agent_plan_project(
 
     # Create agent with CoT reasoning enabled
     task_decomposer = TaskDecomposer()
+    
+    # Check for resume
+    if resume:
+        # Try to find latest checkpoint
+        from src.domain.services.checkpoint_service import CheckpointService
+        checkpoint_service = CheckpointService()
+        latest_checkpoint = await checkpoint_service.get_latest_checkpoint("TaskPlanner")
+        
+        if not latest_checkpoint:
+            console.print("[yellow]No checkpoint found to resume from. Starting fresh.[/yellow]")
+            resume = False
+    
     agent = TaskPlanningAgent(
         name="TaskPlanner",
         llm_provider=llm_provider,
@@ -417,7 +432,25 @@ async def _agent_plan_project(
         enable_cot=True,  # Enable Chain of Thought reasoning
         enable_estimation=estimate,  # Enable estimation if requested
         enable_safety=enable_safety,  # Enable safety filters
+        enable_auto_checkpoint=enable_checkpoint,  # Enable auto-checkpointing
     )
+    
+    # Resume from checkpoint if requested
+    if resume and latest_checkpoint:
+        console.print(f"[green]Resuming from checkpoint: {latest_checkpoint.name}[/green]")
+        await agent.restore_checkpoint(latest_checkpoint)
+        
+        # Show resume summary
+        resume_info = agent.get_resume_summary()
+        console.print(f"\n[bold]Resume Summary:[/bold]")
+        console.print(f"  Progress: {resume_info['progress_percentage']}%")
+        console.print(f"  Last completed: {resume_info['last_completed']}")
+        console.print(f"  Next task: {resume_info['next_task']}")
+        console.print(f"  Estimated remaining: {resume_info['estimated_remaining_hours']}h\n")
+        
+        # Update description to continue from where we left off
+        if agent.task_context and "original_request" in agent.task_context:
+            description = agent.task_context["original_request"]
 
     # Register calculator tool if estimation is enabled
     if estimate:
@@ -426,9 +459,25 @@ async def _agent_plan_project(
         calculator = CalculatorTool(name="calculator")
         agent.register_tool(calculator)
 
-    # Run agent
-    with console.status("[bold green]Agent is thinking..."):
-        result = await agent.run(description)
+    # Run agent with graceful shutdown handling
+    import signal
+    
+    async def save_checkpoint_on_shutdown(signum, frame):
+        """Save checkpoint on graceful shutdown."""
+        console.print("\n[yellow]Interrupted! Saving checkpoint...[/yellow]")
+        await agent.save_checkpoint(milestone="interrupted")
+        console.print("[green]Checkpoint saved. You can resume with --resume flag.[/green]")
+        raise typer.Exit(0)
+    
+    # Set up signal handler for graceful shutdown
+    original_handler = signal.signal(signal.SIGINT, lambda s, f: asyncio.create_task(save_checkpoint_on_shutdown(s, f)))
+    
+    try:
+        with console.status("[bold green]Agent is thinking..."):
+            result = await agent.run(description)
+    finally:
+        # Restore original handler
+        signal.signal(signal.SIGINT, original_handler)
 
     if "error" in result:
         console.print(f"[red]Error: {result['error']}[/red]")
