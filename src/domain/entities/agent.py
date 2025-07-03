@@ -4,7 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
 
 class AgentState(Enum):
@@ -40,6 +41,8 @@ class BaseAgent(ABC):
         self.memory = AgentMemory()
         self.max_iterations = 10
         self.tools = {}
+        self.task_context: Optional[dict[str, Any]] = None
+        self.reasoning_traces: list[dict[str, Any]] = []
 
     @abstractmethod
     async def think(self, observation: dict[str, Any]) -> dict[str, Any]:
@@ -92,3 +95,22 @@ class BaseAgent(ABC):
     def register_tool(self, tool) -> None:
         """Register a tool for the agent to use."""
         self.tools[tool.name] = tool
+    
+    def set_task_context(self, context: dict[str, Any]) -> None:
+        """Set the current task context for checkpointing."""
+        self.task_context = context
+    
+    def get_resume_summary(self) -> dict[str, Any]:
+        """Get summary of current progress for resuming."""
+        if not self.task_context:
+            return {"message": "No task context available"}
+        
+        completed = len(self.task_context.get("tasks_completed", []))
+        total = self.task_context.get("total_steps", 0)
+        
+        return {
+            "progress_percentage": int((completed / total * 100)) if total > 0 else 0,
+            "last_completed": self.task_context.get("tasks_completed", ["None"])[-1],
+            "next_task": self.task_context.get("tasks_remaining", ["None"])[0],
+            "estimated_remaining_hours": len(self.task_context.get("tasks_remaining", [])) * 4,
+        }
