@@ -377,6 +377,9 @@ def agent_plan(
     estimate: bool = typer.Option(
         False, "--estimate", "-e", help="Calculate time and cost estimations"
     ),
+    tools: bool = typer.Option(
+        False, "--tools", "-t", help="Enable web search and calculator tools"
+    ),
     no_safety: bool = typer.Option(
         False, "--no-safety", help="Disable safety filters (not recommended)"
     ),
@@ -384,12 +387,12 @@ def agent_plan(
     checkpoint: bool = typer.Option(True, "--checkpoint/--no-checkpoint", help="Enable auto-checkpointing"),
 ):
     """Use AI agent to plan a project with reasoning steps."""
-    asyncio.run(_agent_plan_project(description, mock, verbose, estimate, not no_safety, resume, checkpoint))
+    asyncio.run(_agent_plan_project(description, mock, verbose, estimate, tools, not no_safety, resume, checkpoint))
 
 
 async def _agent_plan_project(
-    description: str, mock: bool, verbose: bool, estimate: bool = False, enable_safety: bool = True,
-    resume: bool = False, enable_checkpoint: bool = True
+    description: str, mock: bool, verbose: bool, estimate: bool = False, enable_tools: bool = False,
+    enable_safety: bool = True, resume: bool = False, enable_checkpoint: bool = True
 ):
     """Execute agent-based project planning."""
     global _current_tasks
@@ -430,6 +433,7 @@ async def _agent_plan_project(
         llm_provider=llm_provider,
         task_decomposer=task_decomposer,
         enable_cot=True,  # Enable Chain of Thought reasoning
+        enable_tools=enable_tools,  # Enable tools if requested
         enable_estimation=estimate,  # Enable estimation if requested
         enable_safety=enable_safety,  # Enable safety filters
         enable_auto_checkpoint=enable_checkpoint,  # Enable auto-checkpointing
@@ -452,12 +456,17 @@ async def _agent_plan_project(
         if agent.task_context and "original_request" in agent.task_context:
             description = agent.task_context["original_request"]
 
-    # Register calculator tool if estimation is enabled
-    if estimate:
+    # Register tools based on flags
+    if enable_tools or estimate:
         from src.domain.tools.calculator import CalculatorTool
-
         calculator = CalculatorTool(name="calculator")
         agent.register_tool(calculator)
+        
+    if enable_tools:
+        from src.domain.tools.web_search import WebSearchTool
+        web_search = WebSearchTool(name="web_search")
+        agent.register_tool(web_search)
+        console.print("[green]✅ Tools enabled: calculator, web_search[/green]")
 
     # Run agent with graceful shutdown handling
     import signal

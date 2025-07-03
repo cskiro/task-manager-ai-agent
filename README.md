@@ -17,8 +17,8 @@ poetry install
 # Run tests
 poetry run pytest
 
-# Run the demo (coming soon)
-poetry run python scripts/demo_planning.py "Build a web application"
+# Run the AI agent with mock provider
+poetry run python -m src.interface.cli agent plan "Build a web application" --mock
 ```
 
 ## 🏗️ Architecture

@@ -114,3 +114,58 @@ class TestBasicSafetyFilter:
         # Assert
         assert not result.valid
         assert "too long" in result.reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_detects_pii_in_input(self):
+        """Safety filter should detect PII in input."""
+        # Arrange
+        filter = BasicSafetyFilter()
+        pii_inputs = [
+            "Process payment for SSN 123-45-6789",
+            "Send email to john@example.com about the project",
+            "Charge credit card 4532-0151-1283-0366",  # Valid test card
+            "Call customer at 555-123-4567",
+        ]
+
+        # Act & Assert
+        for pii_input in pii_inputs:
+            result = await filter.validate_input(pii_input)
+            assert not result.valid
+            assert "PII" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_detects_pii_in_output(self):
+        """Safety filter should detect PII in output."""
+        # Arrange
+        filter = BasicSafetyFilter()
+        output_with_pii = {
+            "tasks": [
+                {"title": "Contact user at john@example.com"},
+                {"title": "Process SSN 123-45-6789"},
+            ]
+        }
+
+        # Act
+        result = await filter.validate_output(output_with_pii)
+
+        # Assert
+        assert not result.valid
+        assert "PII" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_audit_trail_for_refused_requests(self):
+        """Safety filter should maintain audit trail of refused requests."""
+        # Arrange
+        filter = BasicSafetyFilter()
+        
+        # Act - trigger multiple violations
+        await filter.validate_input("My SSN is 123-45-6789")
+        await filter.validate_input("exec('malicious')")
+        await filter.validate_output({"tasks": [{"title": f"Task {i}"} for i in range(30)]})
+
+        # Assert
+        audit_trail = filter.get_audit_trail()
+        assert len(audit_trail) == 3
+        assert audit_trail[0]["reason"] == "Contains PII: ssn"
+        assert "code injection" in audit_trail[1]["reason"].lower()
+        assert "Too many tasks" in audit_trail[2]["reason"]

@@ -362,7 +362,7 @@ poetry install                    # Install dependencies
 poetry run pytest               # Run all tests
 poetry run pytest tests/unit/   # Run unit tests only
 poetry run pytest --cov=src     # Run with coverage
-poetry run python scripts/demo_domain.py  # Demo domain layer
+poetry run python -m src.interface.cli agent plan "Project" --mock  # Run agent
 
 # Testing specific layers
 poetry run pytest tests/unit/domain/      # Domain tests

@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from src.domain.entities.agent import AgentState, BaseAgent
-from src.domain.entities.checkpoint import AgentCheckpoint
 from src.domain.entities.task import Task
 from src.domain.safety.basic_filter import BasicSafetyFilter
 from src.domain.services.checkpoint_service import CheckpointService
