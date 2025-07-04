@@ -21,16 +21,19 @@ def test_help_command_does_not_crash():
     assert "Usage:" in result.stdout
 
 
-def test_cli_without_args_shows_usage():
-    """Running CLI without arguments should show usage message."""
+def test_cli_without_args_shows_welcome():
+    """Running CLI without arguments should show welcome wizard."""
     result = subprocess.run(
-        [sys.executable, "-m", "src.interface.cli"], capture_output=True, text=True
+        [sys.executable, "-m", "src.interface.cli"], 
+        capture_output=True, 
+        text=True,
+        input="6\n",  # Invalid choice to exit wizard cleanly
     )
-    # Typer exits with code 2 for missing command
-    assert result.returncode == 2
-    assert "Usage:" in result.stderr
-    assert "Error: Missing command" in result.stderr
-    assert "--help" in result.stderr
+    # Welcome wizard should run and exit
+    assert result.returncode == 0
+    assert "Welcome to Task Manager AI" in result.stdout
+    assert "Choose an example project" in result.stdout
+    assert "Invalid choice" in result.stdout
 
 
 def test_interactive_command_explicit():
@@ -108,3 +111,23 @@ def test_load_command_loads_project():
         assert result.returncode == 0
         assert "Setup project" in result.stdout
         assert "loaded" in result.stdout.lower()
+
+
+def test_export_command_exists():
+    """Test that export command exists in CLI."""
+    result = subprocess.run(
+        [sys.executable, "-m", "src.interface.cli", "--help"], capture_output=True, text=True
+    )
+    assert "export" in result.stdout
+    assert result.returncode == 0
+
+
+def test_export_command_handles_no_project():
+    """Test export command when no project is planned."""
+    result = subprocess.run(
+        [sys.executable, "-m", "src.interface.cli", "export", "markdown"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "No project planned yet" in result.stdout

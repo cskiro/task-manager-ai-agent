@@ -9,9 +9,10 @@ import typer
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 from rich.table import Table
 from rich.tree import Tree
+import rich.box
 
 from src.application.use_cases.plan_project import PlanProjectRequest, PlanProjectUseCase
 from src.domain.entities.task_planning_agent import TaskPlanningAgent
@@ -33,6 +34,30 @@ console = Console()
 # Global state for current project (simple solution for MVP)
 _current_tasks = []
 
+# Example projects for quick demonstration
+EXAMPLE_PROJECTS = {
+    "1": {
+        "name": "🛍️  E-commerce Platform",
+        "description": "Build a modern e-commerce platform with React frontend, Node.js API, PostgreSQL database, product catalog, shopping cart, payment processing with Stripe, and AWS deployment",
+        "keywords": ["ecommerce", "shop", "store", "marketplace"]
+    },
+    "2": {
+        "name": "📱  Mobile Fitness App", 
+        "description": "Create a fitness tracking mobile app with React Native, exercise database, workout plans, progress tracking, social features, and premium subscription model",
+        "keywords": ["fitness", "health", "mobile", "workout"]
+    },
+    "3": {
+        "name": "🤖  Discord Bot",
+        "description": "Develop a Discord bot with Python, moderation features, custom commands, role management, music playback, and MongoDB for persistent data storage",
+        "keywords": ["discord", "bot", "automation", "chat"]
+    },
+    "4": {
+        "name": "🎮  Indie Game MVP",
+        "description": "Create a 2D indie game prototype with Unity, player mechanics, level design system, enemy AI, inventory system, and Steam integration preparation",
+        "keywords": ["game", "unity", "godot", "gaming"]
+    }
+}
+
 
 class InMemoryTaskRepository:
     """Simple in-memory task storage for CLI."""
@@ -50,8 +75,15 @@ def plan(
     context: str | None = typer.Option(None, "--context", "-c", help="Additional context"),
     mock: bool = typer.Option(False, "--mock", help="Use mock LLM for testing"),
     model: str = typer.Option("gpt-4-turbo-preview", "--model", "-m", help="OpenAI model to use"),
+    example: str | None = typer.Option(None, "--example", "-e", help="Use an example project (1-4)"),
 ):
     """Plan a project by breaking it down into tasks using AI."""
+    # Handle example projects
+    if example and example in EXAMPLE_PROJECTS:
+        project = EXAMPLE_PROJECTS[example]
+        console.print(f"\n[bold cyan]Using example project:[/bold cyan] {project['name']}")
+        description = project["description"]
+    
     asyncio.run(_plan_project(description, context, mock, model))
 
 
@@ -81,19 +113,43 @@ async def _plan_project(description: str, context: str | None, mock: bool, model
     task_repository = InMemoryTaskRepository()
     use_case = PlanProjectUseCase(llm_provider, task_repository)
 
-    # Execute planning
-    with console.status("[bold green]AI is thinking..."):
+    # Execute planning with enhanced progress display
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task_id = progress.add_task("[cyan]🧠 AI is analyzing your project...", total=None)
+        
         request = PlanProjectRequest(project_id=uuid4(), description=description, context=context)
         response = await use_case.execute(request)
+        
+        progress.update(task_id, description="[green]✨ Planning complete!")
 
     # Store tasks globally for save command
     _current_tasks = response.tasks
 
-    # Display results
+    # Display results with enhanced formatting
     console.print(f"\n[bold green]✓[/bold green] {response.summary}\n")
+    
+    # Show project overview
+    total_hours = sum(task.expected_hours for task in response.tasks)
+    overview_panel = Panel(
+        f"[bold]📊 Project Overview[/bold]\n\n"
+        f"  • [cyan]{len(response.tasks)}[/cyan] tasks identified\n"
+        f"  • [green]~{total_hours:.0f} hours[/green] total effort\n"
+        f"  • [yellow]{sum(1 for t in response.tasks if t.priority.value >= 4)}[/yellow] high-priority tasks\n"
+        f"  • [magenta]{sum(1 for t in response.tasks if not t.dependencies)}[/magenta] tasks can start immediately",
+        border_style="blue",
+        padding=(0, 1),
+    )
+    console.print(overview_panel)
+    console.print()
 
-    # Create task table
-    table = Table(title="Project Tasks", show_lines=True)
+    # Create enhanced task table
+    table = Table(title="📋 Project Tasks", show_lines=True, border_style="blue")
     table.add_column("ID", style="cyan", width=4)
     table.add_column("Task", style="white")
     table.add_column("Priority", style="yellow", width=8)
@@ -134,9 +190,23 @@ async def _plan_project(description: str, context: str | None, mock: bool, model
         console.print("\n")
         console.print(tree)
 
-    # Calculate total time
-    total_hours = sum(task.expected_hours for task in response.tasks)
-    console.print(f"\n[bold]Total estimated time:[/bold] {total_hours:.1f} hours")
+    # Show insights
+    insights = []
+    
+    # Check for parallel opportunities
+    parallel_tasks = sum(1 for t in response.tasks if not t.dependencies)
+    if parallel_tasks > 1:
+        insights.append(f"💡 {parallel_tasks} tasks can be done in parallel, saving time!")
+    
+    # Check for critical tasks
+    critical_tasks = [t for t in response.tasks if t.priority.value >= 4]
+    if critical_tasks:
+        insights.append(f"⚡ Focus on '{critical_tasks[0].title}' first - it's critical!")
+    
+    if insights:
+        console.print("\n[bold]Insights:[/bold]")
+        for insight in insights:
+            console.print(f"  {insight}")
 
 
 def _add_task_to_tree(parent_node, task, all_tasks, task_map, processed=None):
@@ -186,6 +256,214 @@ def save(file_path: Path = typer.Argument(..., help="Path to save the project fi
 
     console.print(f"[green]✓ Project saved to {file_path}[/green]")
     console.print(f"  {len(_current_tasks)} tasks saved")
+
+
+@app.command()
+def export(
+    format: str = typer.Argument(..., help="Export format: markdown, json, csv"),
+    file_path: Path | None = typer.Option(None, "--output", "-o", help="Output file path"),
+    clipboard: bool = typer.Option(False, "--clipboard", "-c", help="Copy to clipboard"),
+):
+    """Export the current project plan in various formats."""
+    global _current_tasks
+    
+    if not _current_tasks:
+        console.print("[red]Error: No project planned yet.[/red]")
+        console.print("Use 'plan' command first to create a project plan.")
+        raise typer.Exit(1)
+    
+    # Validate format
+    format = format.lower()
+    if format not in ["markdown", "json", "csv"]:
+        console.print(f"[red]Error: Unknown format '{format}'[/red]")
+        console.print("Supported formats: markdown, json, csv")
+        raise typer.Exit(1)
+    
+    # Generate export content
+    if format == "markdown":
+        content = _export_to_markdown(_current_tasks)
+        default_ext = ".md"
+    elif format == "json":
+        content = _export_to_json(_current_tasks)
+        default_ext = ".json"
+    else:  # csv
+        content = _export_to_csv(_current_tasks)
+        default_ext = ".csv"
+    
+    # Handle output
+    if file_path:
+        file_path.write_text(content)
+        console.print(f"[green]✅ Exported to {file_path}[/green]")
+    
+    if clipboard:
+        try:
+            import pyperclip
+            pyperclip.copy(content)
+            console.print("[green]📋 Copied to clipboard![/green]")
+        except ImportError:
+            console.print("[yellow]Warning: pyperclip not installed. Install with: pip install pyperclip[/yellow]")
+    
+    if not file_path and not clipboard:
+        # Default to saving with auto-generated name
+        from datetime import datetime
+        filename = f"project_plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}{default_ext}"
+        Path(filename).write_text(content)
+        console.print(f"[green]✅ Exported to {filename}[/green]")
+    
+    # Show export summary
+    lines = content.count('\n') + 1
+    size = len(content.encode('utf-8'))
+    console.print(f"[dim]  Format: {format.upper()} | Tasks: {len(_current_tasks)} | Lines: {lines} | Size: {size} bytes[/dim]")
+
+
+def _export_to_markdown(_current_tasks: list) -> str:
+    """Export tasks to Markdown format."""
+    from datetime import datetime
+    
+    lines = []
+    lines.append("# Project Plan")
+    lines.append(f"\n*Generated by Task Manager AI on {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n")
+    
+    # Overview
+    total_hours = sum(task.expected_hours for task in _current_tasks)
+    lines.append("## 📊 Overview\n")
+    lines.append(f"- **Total Tasks:** {len(_current_tasks)}")
+    lines.append(f"- **Total Effort:** ~{total_hours:.0f} hours")
+    lines.append(f"- **High Priority:** {sum(1 for t in _current_tasks if t.priority.value >= 4)} tasks")
+    lines.append("")
+    
+    # Task list
+    lines.append("## 📋 Tasks\n")
+    
+    # Group by priority
+    priority_groups = {}
+    for task in _current_tasks:
+        priority = task.priority.name
+        if priority not in priority_groups:
+            priority_groups[priority] = []
+        priority_groups[priority].append(task)
+    
+    # Sort priorities
+    priority_order = ["URGENT", "HIGH", "MEDIUM", "LOW"]
+    
+    for priority in priority_order:
+        if priority in priority_groups:
+            tasks = priority_groups[priority]
+            lines.append(f"### {tasks[0].priority.emoji} {priority.title()} Priority\n")
+            
+            for i, task in enumerate(tasks, 1):
+                lines.append(f"#### {i}. {task.title}")
+                if task.description:
+                    lines.append(f"\n{task.description}\n")
+                
+                lines.append(f"- **Estimated Time:** {task.expected_hours:.1f} hours")
+                lines.append(f"- **Status:** {task.status.value}")
+                
+                if task.dependencies:
+                    dep_titles = []
+                    for dep_id in task.dependencies:
+                        dep_task = next((t for t in _current_tasks if t.id == dep_id), None)
+                        if dep_task:
+                            dep_titles.append(dep_task.title)
+                    if dep_titles:
+                        lines.append(f"- **Dependencies:** {', '.join(dep_titles)}")
+                
+                lines.append("")
+    
+    # Execution plan
+    lines.append("## 🎯 Execution Plan\n")
+    lines.append("Tasks that can be started immediately:\n")
+    
+    immediate_tasks = [t for t in _current_tasks if not t.dependencies]
+    for task in immediate_tasks:
+        lines.append(f"- [ ] {task.title} ({task.expected_hours:.1f}h)")
+    
+    lines.append("\n---\n")
+    lines.append("*Created with [Task Manager AI](https://github.com/yourusername/task-manager)*")
+    
+    return '\n'.join(lines)
+
+
+def _export_to_json(_current_tasks: list) -> str:
+    """Export tasks to JSON format."""
+    import json
+    from datetime import datetime
+    
+    data = {
+        "metadata": {
+            "generated_at": datetime.now().isoformat(),
+            "generator": "Task Manager AI",
+            "version": "1.0",
+            "task_count": len(_current_tasks),
+            "total_hours": sum(task.expected_hours for task in _current_tasks)
+        },
+        "tasks": []
+    }
+    
+    for i, task in enumerate(_current_tasks):
+        task_data = {
+            "id": str(task.id),
+            "index": i + 1,
+            "title": task.title,
+            "description": task.description,
+            "priority": {
+                "level": task.priority.value,
+                "name": task.priority.name,
+                "emoji": task.priority.emoji
+            },
+            "status": task.status.value,
+            "estimated_hours": task.expected_hours,
+            "dependencies": [str(dep) for dep in task.dependencies],
+            "dependency_titles": []
+        }
+        
+        # Add dependency titles for readability
+        for dep_id in task.dependencies:
+            dep_task = next((t for t in _current_tasks if t.id == dep_id), None)
+            if dep_task:
+                task_data["dependency_titles"].append(dep_task.title)
+        
+        data["tasks"].append(task_data)
+    
+    return json.dumps(data, indent=2)
+
+
+def _export_to_csv(_current_tasks: list) -> str:
+    """Export tasks to CSV format."""
+    import csv
+    from io import StringIO
+    
+    output = StringIO()
+    writer = csv.writer(output)
+    
+    # Header
+    writer.writerow([
+        "ID", "Title", "Description", "Priority", "Priority Level", 
+        "Status", "Estimated Hours", "Dependencies", "Can Start"
+    ])
+    
+    # Tasks
+    for i, task in enumerate(_current_tasks, 1):
+        # Get dependency titles
+        dep_titles = []
+        for dep_id in task.dependencies:
+            dep_task = next((t for t in _current_tasks if t.id == dep_id), None)
+            if dep_task:
+                dep_titles.append(dep_task.title)
+        
+        writer.writerow([
+            i,
+            task.title,
+            task.description,
+            task.priority.name,
+            task.priority.value,
+            task.status.value,
+            f"{task.expected_hours:.1f}",
+            "; ".join(dep_titles) if dep_titles else "None",
+            "Yes" if not task.dependencies else "No"
+        ])
+    
+    return output.getvalue()
 
 
 async def _save_tasks(repo: JSONTaskRepository, tasks):
@@ -540,6 +818,185 @@ async def _agent_plan_project(
             console.print(f"  Time Saved (Parallel): {estimations['parallel_time_saved']:.1f}h")
 
     console.print(f"\n[dim]Agent State: {agent.state.value}[/dim]")
+
+
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context):
+    """Show welcome screen when no command is provided."""
+    if ctx.invoked_subcommand is None:
+        # No command provided, show welcome wizard
+        asyncio.run(_welcome_wizard())
+
+
+async def _welcome_wizard():
+    """Interactive welcome wizard for first-time users."""
+    console.clear()
+    
+    # Show impressive welcome banner
+    from rich.align import Align
+    from rich.panel import Panel
+    
+    banner = Panel(
+        Align.center(
+            "[bold cyan]🚀 Welcome to Task Manager AI[/bold cyan]\n"
+            "[dim]Your Project Planning Ally[/dim]\n\n"
+            "[italic]Turn your ideas into actionable plans in seconds![/italic]"
+        ),
+        border_style="bright_blue",
+        padding=(1, 2),
+        box=rich.box.DOUBLE_EDGE,
+    )
+    console.print(banner)
+    console.print()
+    
+    # Show example projects
+    console.print("[bold]First time? Let me show you something amazing![/bold]\n")
+    console.print("Choose an example project to see the magic:")
+    
+    for key, project in EXAMPLE_PROJECTS.items():
+        console.print(f"  {key}. {project['name']}")
+    
+    console.print("  5. ✍️  Enter your own project")
+    console.print()
+    
+    # Get user choice
+    choice = Prompt.ask("[bold cyan]→ Your choice (1-5)[/bold cyan]", default="1")
+    
+    if choice in EXAMPLE_PROJECTS:
+        # Use example project
+        project = EXAMPLE_PROJECTS[choice]
+        console.print(f"\n[green]Great choice![/green] Let's plan: {project['name']}\n")
+        
+        # Check for API key and use mock if not available
+        api_key = os.getenv("OPENAI_API_KEY")
+        use_mock = not api_key
+        
+        if use_mock:
+            console.print("\n[yellow]ℹ️  No API key found - using mock mode for demonstration[/yellow]")
+            console.print("[dim]To use real AI, add your OpenAI API key to .env file[/dim]\n")
+        
+        # Show progress theater
+        await _show_progress_theater("Analyzing your project")
+        
+        # Run the planning
+        await _plan_project(project["description"], None, use_mock, "gpt-4-turbo-preview")
+        
+        # Show success celebration
+        _show_success_celebration()
+        
+    elif choice == "5":
+        # Get custom project
+        console.print("\n[bold]Tell me about your project:[/bold]")
+        description = Prompt.ask("[cyan]→[/cyan]")
+        
+        if description.strip():
+            # Check for API key and use mock if not available
+            api_key = os.getenv("OPENAI_API_KEY")
+            use_mock = not api_key
+            
+            if use_mock:
+                console.print("\n[yellow]ℹ️  No API key found - using mock mode for demonstration[/yellow]")
+                console.print("[dim]To use real AI, add your OpenAI API key to .env file[/dim]\n")
+            
+            await _show_progress_theater("Understanding your vision")
+            await _plan_project(description, None, use_mock, "gpt-4-turbo-preview")
+            _show_success_celebration()
+    else:
+        console.print("[yellow]Invalid choice. Please run the command again.[/yellow]")
+
+
+async def _show_progress_theater(base_message: str):
+    """Show engaging progress animation while processing."""
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+    import asyncio
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        # Simulate progress steps
+        steps = [
+            ("🧠 Understanding your project...", 25),
+            ("📊 Analyzing scope and complexity...", 50),
+            ("🔍 Identifying key components...", 75),
+            ("🎯 Optimizing task dependencies...", 90),
+            ("✨ Finalizing your plan...", 100),
+        ]
+        
+        task = progress.add_task(f"[cyan]{base_message}...", total=100)
+        
+        for step_text, target_progress in steps:
+            progress.update(task, description=f"[cyan]{step_text}")
+            
+            # Animate progress
+            current = progress.tasks[0].completed
+            for i in range(int(current), target_progress + 1):
+                progress.update(task, advance=1)
+                await asyncio.sleep(0.02)  # Small delay for animation
+            
+            await asyncio.sleep(0.3)  # Pause between steps
+
+
+def _show_success_celebration():
+    """Show success message with helpful next steps."""
+    console.print("\n")
+    
+    # Create quick export prompt
+    from rich.prompt import Confirm
+    
+    success_panel = Panel(
+        "[bold green]🎉 Success! Your project plan has been created![/bold green]\n\n"
+        "[bold]📤 Export Your Plan:[/bold]\n"
+        "  • [cyan]'task-manager export markdown'[/cyan] - GitHub-ready documentation\n"
+        "  • [cyan]'task-manager export json'[/cyan] - For integrations\n"
+        "  • [cyan]'task-manager export csv'[/cyan] - For spreadsheets\n\n"
+        "[bold]🚀 Next Steps:[/bold]\n"
+        "  • Add [cyan]'--tools'[/cyan] for AI-powered web research\n"
+        "  • Use [cyan]'--estimate'[/cyan] for time & cost calculations\n\n"
+        "[dim]💝 Enjoying Task Manager? Star us on GitHub![/dim]",
+        border_style="green",
+        padding=(1, 2),
+    )
+    console.print(success_panel)
+    
+    # Offer quick export
+    if _current_tasks and Confirm.ask("\n[bold cyan]Would you like to export your plan now?[/bold cyan]", default=True):
+        console.print("\n[bold]Choose format:[/bold]")
+        console.print("  1. 📝 Markdown (recommended)")
+        console.print("  2. 📊 CSV (for Excel/Sheets)")
+        console.print("  3. 🗂️  JSON (for developers)")
+        
+        format_choice = Prompt.ask("[cyan]→ Format (1-3)[/cyan]", default="1")
+        format_map = {"1": "markdown", "2": "csv", "3": "json"}
+        
+        if format_choice in format_map:
+            format = format_map[format_choice]
+            from datetime import datetime
+            filename = f"project_plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            if format == "markdown":
+                content = _export_to_markdown(_current_tasks)
+                filename += ".md"
+            elif format == "csv":
+                content = _export_to_csv(_current_tasks)
+                filename += ".csv"
+            else:
+                content = _export_to_json(_current_tasks)
+                filename += ".json"
+            
+            Path(filename).write_text(content)
+            console.print(f"\n[green]✅ Exported to {filename}[/green]")
+            
+            # Try to copy to clipboard
+            try:
+                import pyperclip
+                pyperclip.copy(content)
+                console.print("[green]📋 Also copied to clipboard![/green]")
+            except:
+                pass
 
 
 if __name__ == "__main__":
