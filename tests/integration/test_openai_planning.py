@@ -100,7 +100,8 @@ class TestOpenAIPlanningIntegration:
         """Test planning a technical project with specific requirements."""
         # Arrange
         api_key = os.getenv("OPENAI_API_KEY")
-        llm_provider = OpenAIProvider(api_key=api_key, model="gpt-4-turbo-preview")
+        # Use gpt-3.5-turbo for integration tests as it's widely available
+        llm_provider = OpenAIProvider(api_key=api_key, model="gpt-3.5-turbo")
         task_repository = InMemoryTaskRepository()
 
         use_case = PlanProjectUseCase(llm_provider=llm_provider, task_repository=task_repository)
