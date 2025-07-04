@@ -47,18 +47,57 @@ class MockLLMProvider:
 
     async def structured_complete(
         self, prompt: str, response_model: type[BaseModel], **kwargs
-    ) -> BaseModel:
+    ) -> BaseModel | dict:
         """Get structured response from mock LLM."""
-        # Simple implementation - get text response and parse as JSON
+        # For task planning, return structured task data
+        if "break down" in prompt.lower() and "tasks" in prompt.lower():
+            return {
+                "tasks": [
+                    {
+                        "title": "Set up project structure",
+                        "description": "Initialize the blog API project with folder structure and dependencies",
+                        "priority": 3,
+                        "time_estimate": {"optimistic": 1.0, "realistic": 2.0, "pessimistic": 3.0}
+                    },
+                    {
+                        "title": "Design database schema",
+                        "description": "Create models for posts, comments, and users",
+                        "priority": 4,
+                        "time_estimate": {"optimistic": 2.0, "realistic": 4.0, "pessimistic": 6.0}
+                    },
+                    {
+                        "title": "Implement authentication",
+                        "description": "Add JWT-based authentication for API endpoints",
+                        "priority": 5,
+                        "time_estimate": {"optimistic": 3.0, "realistic": 5.0, "pessimistic": 8.0}
+                    },
+                    {
+                        "title": "Create CRUD endpoints",
+                        "description": "Build RESTful endpoints for blog posts and comments",
+                        "priority": 4,
+                        "time_estimate": {"optimistic": 4.0, "realistic": 8.0, "pessimistic": 12.0}
+                    },
+                    {
+                        "title": "Add tests and documentation",
+                        "description": "Write unit tests and API documentation",
+                        "priority": 3,
+                        "time_estimate": {"optimistic": 2.0, "realistic": 4.0, "pessimistic": 6.0}
+                    }
+                ]
+            }
+        
+        # For other cases, try the old approach
         text_response = await self.complete(prompt, **kwargs)
-
-        # Try to parse as JSON, otherwise create default instance
         try:
             data = json.loads(text_response)
-            return response_model(**data)
+            if isinstance(response_model, type) and issubclass(response_model, BaseModel):
+                return response_model(**data)
+            return data
         except Exception:
-            # Return default instance
-            return response_model()
+            # Return empty dict for dict type, or default instance for BaseModel
+            if isinstance(response_model, type) and issubclass(response_model, BaseModel):
+                return response_model()
+            return {}
 
     def _default_task_breakdown(self, prompt: str) -> str:
         """Generate task breakdown based on project type."""

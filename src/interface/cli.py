@@ -15,6 +15,8 @@ from rich.tree import Tree
 import rich.box
 
 from src.application.use_cases.plan_project import PlanProjectRequest, PlanProjectUseCase
+from src.application.use_cases.streaming_runner import StreamingPlanRunner
+from src.application.models import UpdateType, PlanningUpdate
 from src.domain.entities.task_planning_agent import TaskPlanningAgent
 from src.domain.services.task_decomposer import TaskDecomposer
 from src.infrastructure.llm import MockLLMProvider, OpenAIProvider
@@ -71,10 +73,10 @@ class InMemoryTaskRepository:
 
 @app.command()
 def plan(
-    description: str = typer.Argument(..., help="Project description"),
+    description: str = typer.Argument(None, help="Project description"),
     context: str | None = typer.Option(None, "--context", "-c", help="Additional context"),
     mock: bool = typer.Option(False, "--mock", help="Use mock LLM for testing"),
-    model: str = typer.Option("gpt-4-turbo-preview", "--model", "-m", help="OpenAI model to use"),
+    model: str = typer.Option("o3", "--model", "-m", help="OpenAI model to use"),
     example: str | None = typer.Option(None, "--example", "-e", help="Use an example project (1-4)"),
 ):
     """Plan a project by breaking it down into tasks using AI."""
@@ -83,6 +85,9 @@ def plan(
         project = EXAMPLE_PROJECTS[example]
         console.print(f"\n[bold cyan]Using example project:[/bold cyan] {project['name']}")
         description = project["description"]
+    elif not description:
+        console.print("[red]Error: Either provide a project description or use --example flag[/red]")
+        raise typer.Exit(1)
     
     asyncio.run(_plan_project(description, context, mock, model))
 
@@ -107,26 +112,66 @@ async def _plan_project(description: str, context: str | None, mock: bool, model
             console.print("Please set your OpenAI API key in .env file or environment")
             raise typer.Exit(1)
 
-        llm_provider = OpenAIProvider(api_key=api_key, model=model)
-        console.print(f"[green]Using OpenAI {model}[/green]")
+        # Use environment variable for model if not specified
+        env_model = os.getenv("OPENAI_MODEL", model)
+        llm_provider = OpenAIProvider(api_key=api_key, model=env_model)
+        console.print(f"[green]Using OpenAI {env_model}[/green]")
 
     task_repository = InMemoryTaskRepository()
-    use_case = PlanProjectUseCase(llm_provider, task_repository)
-
-    # Execute planning with enhanced progress display
-    from rich.progress import Progress, SpinnerColumn, TextColumn
     
-    with Progress(
+    # Use streaming runner for real-time updates
+    runner = StreamingPlanRunner(llm_provider, task_repository)
+    
+    # Execute planning with streaming updates
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+    from rich.live import Live
+    
+    # Create progress display
+    progress = Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
         console=console,
-    ) as progress:
-        task_id = progress.add_task("[cyan]🧠 AI is analyzing your project...", total=None)
+    )
+    
+    # Initialize progress tracking
+    main_task = progress.add_task("Planning project...", total=100)
+    created_tasks = []
+    current_status = ""
+    
+    # Update handler for streaming progress
+    def handle_update(update: PlanningUpdate):
+        nonlocal current_status, created_tasks
         
+        # Update progress bar
+        progress.update(main_task, completed=int(update.progress * 100))
+        
+        # Update status message based on update type
+        if update.type == UpdateType.STARTED:
+            progress.update(main_task, description="[cyan]🚀 Starting project analysis...")
+        elif update.type == UpdateType.ANALYZING:
+            progress.update(main_task, description="[blue]🔍 Analyzing requirements...")
+        elif update.type == UpdateType.DECOMPOSING:
+            progress.update(main_task, description="[yellow]📝 Breaking down into tasks...")
+        elif update.type == UpdateType.TASK_CREATED:
+            task = update.data.get("task") if update.data else None
+            if task:
+                created_tasks.append(task.title)
+                progress.update(main_task, description=f"[green]✨ Created: {task.title[:40]}...")
+        elif update.type == UpdateType.ESTIMATING:
+            progress.update(main_task, description="[magenta]⏱️  Estimating effort...")
+        elif update.type == UpdateType.OPTIMIZING:
+            progress.update(main_task, description="[cyan]🔄 Optimizing dependencies...")
+        elif update.type == UpdateType.COMPLETED:
+            progress.update(main_task, description="[bold green]✅ Planning complete!")
+        elif update.type == UpdateType.ERROR:
+            progress.update(main_task, description=f"[bold red]❌ Error: {update.message}")
+    
+    # Execute with live display
+    with Live(progress, console=console, refresh_per_second=10):
         request = PlanProjectRequest(project_id=uuid4(), description=description, context=context)
-        response = await use_case.execute(request)
-        
-        progress.update(task_id, description="[green]✨ Planning complete!")
+        response = await runner.execute(request, handle_update)
 
     # Store tasks globally for save command
     _current_tasks = response.tasks
@@ -878,11 +923,18 @@ async def _welcome_wizard():
         # Show progress theater
         await _show_progress_theater("Analyzing your project")
         
-        # Run the planning
-        await _plan_project(project["description"], None, use_mock, "gpt-4-turbo-preview")
-        
-        # Show success celebration
-        _show_success_celebration()
+        # Run the planning with error handling
+        try:
+            await _plan_project(project["description"], None, use_mock, os.getenv("OPENAI_MODEL", "o3"))
+            # Show success celebration
+            _show_success_celebration()
+        except Exception as e:
+            console.print(f"\n[red]❌ Error: {str(e)}[/red]")
+            if "model" in str(e).lower() and "not exist" in str(e).lower():
+                console.print("[yellow]ℹ️  This might be due to an invalid model name or insufficient API access.[/yellow]")
+                console.print("[dim]Try using --model gpt-3.5-turbo, --model gpt-4, or check your API key permissions.[/dim]")
+                console.print("[dim]Note: o3 is a newer model that may require special access.[/dim]")
+            console.print("\n[dim]You can also use --mock flag to test without an API key.[/dim]")
         
     elif choice == "5":
         # Get custom project
@@ -899,8 +951,16 @@ async def _welcome_wizard():
                 console.print("[dim]To use real AI, add your OpenAI API key to .env file[/dim]\n")
             
             await _show_progress_theater("Understanding your vision")
-            await _plan_project(description, None, use_mock, "gpt-4-turbo-preview")
-            _show_success_celebration()
+            try:
+                await _plan_project(description, None, use_mock, os.getenv("OPENAI_MODEL", "o3"))
+                _show_success_celebration()
+            except Exception as e:
+                console.print(f"\n[red]❌ Error: {str(e)}[/red]")
+                if "model" in str(e).lower() and "not exist" in str(e).lower():
+                    console.print("[yellow]ℹ️  This might be due to an invalid model name or insufficient API access.[/yellow]")
+                    console.print("[dim]Try using --model gpt-3.5-turbo, --model gpt-4, or check your API key permissions.[/dim]")
+                console.print("[dim]Note: o3 is a newer model that may require special access.[/dim]")
+                console.print("\n[dim]You can also use --mock flag to test without an API key.[/dim]")
     else:
         console.print("[yellow]Invalid choice. Please run the command again.[/yellow]")
 

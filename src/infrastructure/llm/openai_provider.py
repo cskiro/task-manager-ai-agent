@@ -12,7 +12,7 @@ class OpenAIProvider:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "gpt-4-turbo-preview",
+        model: str = "o3",
         temperature: float = 0.7,
         max_tokens: int = 2000,
     ):
@@ -66,6 +66,15 @@ class OpenAIProvider:
             response = await self.client.chat.completions.create(**params)
             return response.choices[0].message.content
         except Exception as e:
+            error_msg = str(e)
+            # Provide helpful error messages for common issues
+            if "model_not_found" in error_msg or "does not exist" in error_msg:
+                model_hint = f"Model '{self.model}' is not available. "
+                if self.model == "o3":
+                    model_hint += "o3 is a newer model that may require special access. Try using --model gpt-3.5-turbo or --model gpt-4 instead."
+                else:
+                    model_hint += "Try using --model gpt-3.5-turbo which is widely available."
+                raise RuntimeError(f"OpenAI API error: {model_hint}") from e
             # Log error in production
             raise RuntimeError(f"OpenAI API error: {str(e)}") from e
 

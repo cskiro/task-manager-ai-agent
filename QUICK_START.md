@@ -27,6 +27,11 @@
    ```
    
    **Note:** The app works without an API key! It will automatically use mock mode for testing.
+   
+   **Model Selection:**
+   - Default: `o3` (newest reasoning model, requires verification)
+   - Fallback: Use `--model gpt-3.5-turbo` or set `OPENAI_MODEL=gpt-3.5-turbo` in .env
+   - Other options: `gpt-4`, `gpt-4-turbo`
 
 ## Your First Project Plan (30 seconds)
 
