@@ -76,7 +76,7 @@ def plan(
     description: str = typer.Argument(None, help="Project description"),
     context: str | None = typer.Option(None, "--context", "-c", help="Additional context"),
     mock: bool = typer.Option(False, "--mock", help="Use mock LLM for testing"),
-    model: str = typer.Option("o3", "--model", "-m", help="OpenAI model to use"),
+    model: str | None = typer.Option(None, "--model", "-m", help="OpenAI model to use (overrides OPENAI_MODEL env)"),
     example: str | None = typer.Option(None, "--example", "-e", help="Use an example project (1-4)"),
 ):
     """Plan a project by breaking it down into tasks using AI."""
@@ -92,7 +92,7 @@ def plan(
     asyncio.run(_plan_project(description, context, mock, model))
 
 
-async def _plan_project(description: str, context: str | None, mock: bool, model: str):
+async def _plan_project(description: str, context: str | None, mock: bool, model: str | None):
     """Async implementation of project planning."""
     global _current_tasks
 
@@ -112,10 +112,16 @@ async def _plan_project(description: str, context: str | None, mock: bool, model
             console.print("Please set your OpenAI API key in .env file or environment")
             raise typer.Exit(1)
 
-        # Use environment variable for model if not specified
-        env_model = os.getenv("OPENAI_MODEL", model)
-        llm_provider = OpenAIProvider(api_key=api_key, model=env_model)
-        console.print(f"[green]Using OpenAI {env_model}[/green]")
+        # Model precedence: CLI argument > env variable > default
+        if model is not None:
+            # User explicitly specified model via CLI
+            selected_model = model
+        else:
+            # Fall back to env variable or default
+            selected_model = os.getenv("OPENAI_MODEL", "o3")
+        
+        llm_provider = OpenAIProvider(api_key=api_key, model=selected_model)
+        console.print(f"[green]Using OpenAI {selected_model}[/green]")
 
     task_repository = InMemoryTaskRepository()
     
@@ -925,7 +931,7 @@ async def _welcome_wizard():
         
         # Run the planning with error handling
         try:
-            await _plan_project(project["description"], None, use_mock, os.getenv("OPENAI_MODEL", "o3"))
+            await _plan_project(project["description"], None, use_mock, None)
             # Show success celebration
             _show_success_celebration()
         except Exception as e:
@@ -952,7 +958,7 @@ async def _welcome_wizard():
             
             await _show_progress_theater("Understanding your vision")
             try:
-                await _plan_project(description, None, use_mock, os.getenv("OPENAI_MODEL", "o3"))
+                await _plan_project(description, None, use_mock, None)
                 _show_success_celebration()
             except Exception as e:
                 console.print(f"\n[red]❌ Error: {str(e)}[/red]")
